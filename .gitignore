@@ -1,0 +1,61 @@
+# Environment variables — NEVER commit your API keys
+.env
+
+# Cache and exports
+.cache/
+exports/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.coveragerc
+
+# Playwright
+/test-results/
+/playwright-report/
+
+# Docker
+.dockerignore
+
+# Kubernetes secrets (never commit real secrets)
+k8s/secret-real.yaml
+
+# Logs
+*.log
+logs/

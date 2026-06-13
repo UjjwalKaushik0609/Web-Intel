@@ -1,0 +1,146 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# k8s/deployment.yaml — Kubernetes Deployment for Web Scraping AI Bot
+# Deploys 2 replicas with resource limits and health checks.
+# API key is loaded from Kubernetes Secret (see secret.yaml).
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper-bot-deployment
+  namespace: default
+  labels:
+    app: scraper-bot
+    version: "1.0.0"
+    component: web
+spec:
+  replicas: 2  # Start with 2 pods; HPA will scale up to 5
+
+  selector:
+    matchLabels:
+      app: scraper-bot
+
+  # Rolling update strategy — zero-downtime deployments
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Allow 1 extra pod during update
+      maxUnavailable: 0  # Never have 0 available pods
+
+  template:
+    metadata:
+      labels:
+        app: scraper-bot
+        version: "1.0.0"
+
+    spec:
+      # Security context for the pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      containers:
+        - name: scraper-bot
+          # Replace with your actual ECR image URI after pushing
+          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/scraper-bot:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8501
+              name: streamlit
+              protocol: TCP
+
+          # Load API key from Kubernetes Secret (never hardcode secrets)
+          env:
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: scraper-bot-secrets
+                  key: GEMINI_API_KEY
+            - name: STREAMLIT_SERVER_PORT
+              value: "8501"
+            - name: STREAMLIT_SERVER_ADDRESS
+              value: "0.0.0.0"
+            - name: STREAMLIT_SERVER_HEADLESS
+              value: "true"
+            - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+              value: "false"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: CACHE_TTL
+              value: "3600"
+
+          # Resource limits — prevents one pod from consuming all cluster resources
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+          # Liveness probe — restart pod if Streamlit crashes
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+
+          # Readiness probe — only send traffic when app is fully started
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # Startup probe — give app time to start before liveness kicks in
+          startupProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12  # 12 * 10s = 2 minutes to start
+
+          # Container security context
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # Playwright needs to write temp files
+            capabilities:
+              drop:
+                - ALL
+
+          # Persistent volume for cache and exports
+          volumeMounts:
+            - name: cache-volume
+              mountPath: /app/.cache
+            - name: exports-volume
+              mountPath: /app/exports
+
+      volumes:
+        - name: cache-volume
+          emptyDir:
+            sizeLimit: 500Mi
+        - name: exports-volume
+          emptyDir:
+            sizeLimit: 500Mi
+
+      # Spread pods across availability zones for high availability
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: scraper-bot
+
+      # Grace period for Streamlit to finish ongoing requests
+      terminationGracePeriodSeconds: 30

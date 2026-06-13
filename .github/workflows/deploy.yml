@@ -1,0 +1,224 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .github/workflows/deploy.yml — CI/CD Pipeline
+#
+# Triggers: push to main branch
+# Steps:
+#   1. Run pytest tests
+#   2. Build Docker image
+#   3. Push to AWS ECR
+#   4. Deploy to AWS EKS using kubectl
+#
+# Required GitHub Secrets (set in repo Settings → Secrets → Actions):
+#   - AWS_ACCESS_KEY_ID        — IAM user access key
+#   - AWS_SECRET_ACCESS_KEY    — IAM user secret key
+#   - AWS_REGION               — e.g., us-east-1
+#   - AWS_ACCOUNT_ID           — your 12-digit AWS account ID
+#   - ECR_REPOSITORY           — ECR repo name, e.g., scraper-bot
+#   - EKS_CLUSTER_NAME         — your EKS cluster name
+#   - GEMINI_API_KEY            — for running tests (optional)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI/CD — Build, Test, Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  # ── JOB 1: Run Tests ───────────────────────────────────────────────────────
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Create .env for testing
+        run: |
+          echo "GEMINI_API_KEY=test_key_for_ci" >> .env
+          echo "CACHE_TTL=60" >> .env
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=scraper --cov=pipeline --cov=ai_engine \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  # ── JOB 2: Build & Push Docker Image ──────────────────────────────────────
+  build-and-push:
+    name: 🐳 Build & Push to ECR
+    needs: test  # Only runs if tests pass
+    runs-on: ubuntu-latest
+    # Only build on push to main, not on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    outputs:
+      image-uri: ${{ steps.build-image.outputs.image-uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push Docker image to ECR
+        id: build-image
+        run: |
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+          LATEST_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
+
+          echo "Building image: $IMAGE_URI"
+
+          # Build with both SHA and latest tags
+          docker build \
+            --tag "$IMAGE_URI" \
+            --tag "$LATEST_URI" \
+            --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+            --build-arg GIT_COMMIT=${{ github.sha }} \
+            .
+
+          # Push both tags
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_URI"
+
+          echo "image-uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "✅ Image pushed: $IMAGE_URI"
+
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.build-image.outputs.image-uri }}
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"  # Don't fail build on scan results
+
+      - name: Upload vulnerability scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  # ── JOB 3: Deploy to EKS ──────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy to EKS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # Use deployment environment for approval gates (optional)
+    # environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Create/update Kubernetes Secret
+        run: |
+          kubectl create secret generic scraper-bot-secrets \
+            --from-literal=GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Update deployment image
+        run: |
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+
+          # Update the deployment.yaml with the new image URI
+          sed -i "s|YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/scraper-bot:latest|$IMAGE_URI|g" \
+            k8s/deployment.yaml
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/secret.yaml || true   # Skip if already exists (managed above)
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
+
+      - name: Wait for rollout to complete
+        run: |
+          kubectl rollout status deployment/scraper-bot-deployment \
+            --timeout=300s
+
+      - name: Verify deployment
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployment scraper-bot-deployment
+          echo ""
+          echo "=== Running Pods ==="
+          kubectl get pods -l app=scraper-bot
+          echo ""
+          echo "=== Service ==="
+          kubectl get service scraper-bot-service
+          echo ""
+          echo "=== HPA Status ==="
+          kubectl get hpa scraper-bot-hpa
+
+      - name: Get Load Balancer URL
+        run: |
+          echo "=== App URL (may take 1-2 min for DNS propagation) ==="
+          kubectl get service scraper-bot-service \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+          echo ""
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed! Rolling back..."
+          kubectl rollout undo deployment/scraper-bot-deployment
+          echo "✅ Rollback completed"
