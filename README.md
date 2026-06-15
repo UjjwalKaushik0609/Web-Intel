@@ -37,48 +37,70 @@ An intelligent web scraping system powered by **Google Gemini 1.5 Flash**, built
 
 ```
 web-scraping-ai-bot/
-├── scraper/
-│   ├── base_scraper.py      # requests + BeautifulSoup4, retry + user-agent rotation
-│   ├── dynamic_scraper.py   # Playwright for JS-heavy pages
-│   ├── cleaner.py           # HTML → clean text conversion
-│   ├── chunker.py           # Token-safe text splitting for Gemini
-│   └── detector.py          # Auto-detect static vs dynamic pages
 │
-├── ai_engine/
-│   ├── client.py            # Gemini API wrapper (google-generativeai)
-│   ├── prompts.py           # All prompt templates
-│   ├── summarizer.py        # Multi-chunk summarization
-│   └── extractor.py         # Structured JSON extraction + Q&A
-│
-├── pipeline/
-│   ├── pipeline.py          # Master orchestrator
-│   ├── cache.py             # File-based TTL cache
-│   ├── deduplicator.py      # Remove duplicate records
-│   └── exporter.py          # CSV and JSON export
-│
-├── app/
-│   └── main.py              # Streamlit UI (3 tabs)
-│
-├── tests/
-│   ├── test_scraper.py      # Unit tests for scraper layer
-│   └── test_pipeline.py     # Unit tests for pipeline layer
-│
-├── k8s/
-│   ├── deployment.yaml      # Kubernetes Deployment (2 replicas)
-│   ├── service.yaml         # LoadBalancer Service
-│   ├── secret.yaml          # API key Secret
-│   └── hpa.yaml             # Horizontal Pod Autoscaler (2–5 pods)
+├── .devcontainer/
+│   └── devcontainer.json         # VS Code Dev Container configuration
 │
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml       # GitHub Actions CI/CD pipeline
+│       └── deploy.yml            # GitHub Actions CI/CD
 │
-├── Dockerfile               # Multi-stage, non-root, Playwright + Chromium
-├── docker-compose.yml       # Local development single-service setup
-├── requirements.txt
-├── .env.example
-├── .gitignore
-└── README.md
+├── ai_engine/
+│   ├── __init__.py
+│   ├── client.py                 # Gemini/OpenAI API wrapper
+│   └── extractor.py              # AI-powered information extraction
+│
+├── analytics/
+│   ├── __init__.py
+│   ├── agent.py                  # AI analytics agent
+│   ├── dashboard.py              # Dashboard generation
+│   ├── eda.py                    # Exploratory Data Analysis
+│   ├── nlp.py                    # NLP processing
+│   ├── reporter.py               # Report generation
+│   ├── sentiment.py              # Sentiment analysis
+│   └── visualizer.py             # Charts and visualizations
+│
+├── app/
+│   ├── __init__.py
+│   ├── main.py                   # Main application entry point
+│   └── powerbi_dashboard.py      # Power BI integration
+│
+├── k8s/
+│   ├── deployment.yaml           # Kubernetes deployment
+│   ├── hpa.yaml                  # Horizontal Pod Autoscaler
+│   ├── secret.yaml               # Secrets management
+│   └── service.yaml              # Kubernetes service
+│
+├── monitor/
+│   └── tracker.py                # Website/data change monitoring
+│
+├── pipeline/
+│   ├── __init__.py
+│   ├── cache.py                  # Caching layer
+│   ├── deduplicator.py           # Duplicate removal
+│   ├── exporter.py               # CSV/JSON export
+│   └── pipeline.py               # Master orchestration pipeline
+│
+├── scraper/
+│   ├── __init__.py
+│   ├── base_scraper.py           # Static scraping
+│   ├── chunker.py                # Token-aware chunking
+│   ├── cleaner.py                # HTML cleaning
+│   ├── detector.py               # Static vs dynamic detection
+│   ├── dynamic_scraper.py        # Playwright/Selenium scraping
+│   └── local_extractor.py        # Local structured extraction
+│
+├── tests/
+│   ├── __init__.py
+│   ├── test_pipeline.py          # Pipeline tests
+│   └── test_scraper.py           # Scraper tests
+│
+├── .env.example                  # Environment variables template
+├── .gitignore                    # Git ignore rules
+├── Dockerfile                    # Docker image
+├── docker-compose.yml            # Local deployment
+├── README.md                     # Documentation
+└── requirements.txt              # Python dependencies
 ```
 
 ---
