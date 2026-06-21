@@ -1,10 +1,9 @@
 """
 visualizer.py
 -------------
-Developer-built: Chart generation using Plotly for interactive visualizations.
-Creates bar charts, histograms, scatter plots, pie charts, word frequency charts.
-All charts are returned as Plotly figures ready for Streamlit's st.plotly_chart().
-No AI involved — pure data visualization logic.
+Developer-built: Chart generation for the Analytics Agent tab.
+FIX: All charts now use the SAME dark theme as the Power BI Dashboard
+so text/labels are readable against the dark app background.
 """
 
 import logging
@@ -14,464 +13,243 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 logger = logging.getLogger(__name__)
 
-# Consistent color palette across all charts
-COLOR_PALETTE = px.colors.qualitative.Set2
-PRIMARY_COLOR = "#667eea"
-SECONDARY_COLOR = "#764ba2"
+# ── DARK THEME (matches app/powerbi_dashboard.py) ─────────────────────────────
+BG     = "#0f0e17"
+CARD   = "#221f35"
+BORDER = "#2d2a45"
+TEXT   = "#e2e8f0"
+SUB    = "#94a3b8"
+DIM    = "#475569"
+TEAL   = "#06b6d4"
+PURPLE = "#a855f7"
+PINK   = "#ec4899"
+GREEN  = "#10b981"
+
+PALETTE = [TEAL, PURPLE, PINK, GREEN, "#f59e0b", "#3b82f6", "#ef4444", "#8b5cf6"]
+
+DARK_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(color=SUB, family="Inter, sans-serif", size=11),
+    title_font=dict(color=TEXT, size=14),
+    xaxis=dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.06)",
+               tickfont=dict(color=DIM, size=10)),
+    yaxis=dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.06)",
+               tickfont=dict(color=DIM, size=10)),
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color=SUB, size=10)),
+    margin=dict(l=40, r=20, t=50, b=40),
+    hoverlabel=dict(bgcolor=CARD, font_color=TEXT, bordercolor=BORDER),
+)
 
 
-def plot_value_counts(
-    df: pd.DataFrame,
-    column: str,
-    top_n: int = 15,
-    title: Optional[str] = None,
-) -> go.Figure:
-    """
-    Bar chart of top N value counts for a categorical column.
-
-    Args:
-        df: Input DataFrame.
-        column: Column name to plot.
-        top_n: Number of top categories to show.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
+def plot_value_counts(df: pd.DataFrame, column: str, top_n: int = 15,
+                      title: Optional[str] = None) -> go.Figure:
     try:
         counts = df[column].value_counts().head(top_n).reset_index()
         counts.columns = [column, "count"]
-
-        fig = px.bar(
-            counts,
-            x=column,
-            y="count",
-            title=title or f"Top {top_n} Values — {column}",
+        fig = px.bar(counts, x=column, y="count",
+            title=title or f"Top {top_n} — {column}",
             color="count",
-            color_continuous_scale=["#667eea", "#764ba2"],
-            text="count",
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            xaxis_tickangle=-45,
-            showlegend=False,
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            font=dict(size=12),
-        )
+            color_continuous_scale=[[0,TEAL],[1,PURPLE]],
+            text="count")
+        fig.update_traces(textposition="outside", textfont=dict(color=DIM))
+        fig.update_layout(**DARK_LAYOUT, xaxis_tickangle=-45, showlegend=False)
+        fig.update_coloraxes(showscale=False)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_value_counts failed: {e}")
+        logger.error(f"[Visualizer] plot_value_counts: {e}")
         return go.Figure()
 
 
-def plot_histogram(
-    df: pd.DataFrame,
-    column: str,
-    bins: int = 20,
-    title: Optional[str] = None,
-) -> go.Figure:
-    """
-    Histogram for a numeric column showing distribution.
-
-    Args:
-        df: Input DataFrame.
-        column: Numeric column to plot.
-        bins: Number of histogram bins.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
+def plot_histogram(df: pd.DataFrame, column: str, bins: int = 20,
+                   title: Optional[str] = None) -> go.Figure:
     try:
-        fig = px.histogram(
-            df,
-            x=column,
-            nbins=bins,
+        fig = px.histogram(df, x=column, nbins=bins,
             title=title or f"Distribution of {column}",
-            color_discrete_sequence=[PRIMARY_COLOR],
-            marginal="box",  # Add box plot on top
-        )
-        fig.update_layout(
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            bargap=0.05,
-        )
+            color_discrete_sequence=[TEAL], marginal="box")
+        fig.update_layout(**DARK_LAYOUT, bargap=0.05)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_histogram failed: {e}")
+        logger.error(f"[Visualizer] plot_histogram: {e}")
         return go.Figure()
 
 
-def plot_scatter(
-    df: pd.DataFrame,
-    x_col: str,
-    y_col: str,
-    color_col: Optional[str] = None,
-    title: Optional[str] = None,
-) -> go.Figure:
-    """
-    Scatter plot to show relationship between two numeric columns.
-
-    Args:
-        df: Input DataFrame.
-        x_col: X-axis column.
-        y_col: Y-axis column.
-        color_col: Optional column to color points by.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
+def plot_scatter(df: pd.DataFrame, x_col: str, y_col: str,
+                 color_col: Optional[str] = None, title: Optional[str] = None) -> go.Figure:
     try:
-        fig = px.scatter(
-            df,
-            x=x_col,
-            y=y_col,
-            color=color_col,
+        # FIX: drop NaN and ensure no negative/invalid values before plotting
+        plot_df = df[[c for c in [x_col, y_col, color_col] if c]].copy()
+        plot_df = plot_df.dropna(subset=[x_col, y_col])
+        if plot_df.empty:
+            return go.Figure()
+
+        fig = px.scatter(plot_df, x=x_col, y=y_col, color=color_col,
             title=title or f"{x_col} vs {y_col}",
-            trendline="ols",  # Add regression line
-            color_discrete_sequence=COLOR_PALETTE,
-        )
-        fig.update_layout(
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-        )
+            color_discrete_sequence=PALETTE)
+        fig.update_traces(marker=dict(line=dict(color=BG, width=1), opacity=0.85))
+        fig.update_layout(**DARK_LAYOUT)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_scatter failed: {e}")
+        logger.error(f"[Visualizer] plot_scatter: {e}")
         return go.Figure()
 
 
-def plot_pie(
-    df: pd.DataFrame,
-    column: str,
-    top_n: int = 8,
-    title: Optional[str] = None,
-) -> go.Figure:
-    """
-    Pie chart for categorical distribution.
-
-    Args:
-        df: Input DataFrame.
-        column: Categorical column.
-        top_n: Max slices (others grouped as 'Other').
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
+def plot_pie(df: pd.DataFrame, column: str, top_n: int = 8,
+            title: Optional[str] = None) -> go.Figure:
     try:
         counts = df[column].value_counts()
         if len(counts) > top_n:
             top = counts.head(top_n)
-            other_count = counts.iloc[top_n:].sum()
-            top["Other"] = other_count
+            top["Other"] = counts.iloc[top_n:].sum()
             counts = top
-
-        fig = px.pie(
-            values=counts.values,
-            names=counts.index,
+        fig = px.pie(values=counts.values, names=counts.index,
             title=title or f"Distribution of {column}",
-            color_discrete_sequence=COLOR_PALETTE,
-            hole=0.3,  # Donut style
-        )
-        fig.update_traces(textposition="inside", textinfo="percent+label")
-        fig.update_layout(paper_bgcolor="white")
+            color_discrete_sequence=PALETTE, hole=0.45)
+        fig.update_traces(textposition="outside", textfont=dict(color=TEXT, size=10),
+            marker=dict(line=dict(color=BG, width=2)))
+        fig.update_layout(**DARK_LAYOUT)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_pie failed: {e}")
+        logger.error(f"[Visualizer] plot_pie: {e}")
         return go.Figure()
 
 
-def plot_word_frequency(keywords: list, top_n: int = 20, title: str = "Top Keywords") -> go.Figure:
-    """
-    Horizontal bar chart for word frequency / keywords.
-
-    Args:
-        keywords: List of dicts with 'word' and 'count' keys.
-        top_n: Number of keywords to show.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
+def plot_word_frequency(keywords: list, top_n: int = 20,
+                        title: str = "Top Keywords") -> go.Figure:
     try:
-        if not keywords:
-            return go.Figure()
-
-        df = pd.DataFrame(keywords[:top_n])
-        df = df.sort_values("count", ascending=True)
-
-        fig = px.bar(
-            df,
-            x="count",
-            y="word",
-            orientation="h",
-            title=title,
-            color="count",
-            color_continuous_scale=["#667eea", "#764ba2"],
-            text="count",
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            showlegend=False,
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            yaxis=dict(tickfont=dict(size=11)),
-            height=max(400, len(df) * 22),
-        )
+        if not keywords: return go.Figure()
+        df = pd.DataFrame(keywords[:top_n]).sort_values("count", ascending=True)
+        fig = px.bar(df, x="count", y="word", orientation="h", title=title,
+            color="count", color_continuous_scale=[[0,TEAL],[1,PURPLE]], text="count")
+        fig.update_traces(textposition="outside", textfont=dict(color=DIM))
+        # FIX: apply base layout first, then MERGE extra axis tweaks via
+        # update_yaxes() instead of passing a second literal yaxis= kwarg
+        # (passing yaxis twice — once inside **DARK_LAYOUT, once explicitly —
+        # raised "got multiple values for keyword argument 'yaxis'", which
+        # was silently caught and returned a blank chart)
+        fig.update_layout(**DARK_LAYOUT, showlegend=False,
+            height=max(400, len(df)*22))
+        fig.update_yaxes(tickfont=dict(color=SUB, size=11))
+        fig.update_coloraxes(showscale=False)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_word_frequency failed: {e}")
+        logger.error(f"[Visualizer] plot_word_frequency: {e}")
         return go.Figure()
 
 
 def plot_sentiment_gauge(polarity: float, title: str = "Sentiment Score") -> go.Figure:
-    """
-    Gauge chart showing sentiment polarity (-1 to 1).
-
-    Args:
-        polarity: Sentiment polarity score (-1 to 1).
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
     try:
-        # Map -1..1 to 0..100 for gauge
-        gauge_value = (polarity + 1) * 50
-
-        if polarity >= 0.1:
-            bar_color = "#2ecc71"
-        elif polarity <= -0.1:
-            bar_color = "#e74c3c"
-        else:
-            bar_color = "#f39c12"
-
+        bar_color = GREEN if polarity >= 0.1 else PINK if polarity <= -0.1 else "#f59e0b"
         fig = go.Figure(go.Indicator(
-            mode="gauge+number+delta",
-            value=round(polarity, 3),
-            title={"text": title, "font": {"size": 16}},
-            delta={"reference": 0, "increasing": {"color": "#2ecc71"}},
-            gauge={
-                "axis": {"range": [-1, 1], "tickwidth": 1},
-                "bar": {"color": bar_color},
-                "steps": [
-                    {"range": [-1, -0.1], "color": "#fadbd8"},
-                    {"range": [-0.1, 0.1], "color": "#fef9e7"},
-                    {"range": [0.1, 1], "color": "#d5f5e3"},
-                ],
-                "threshold": {
-                    "line": {"color": "black", "width": 2},
-                    "thickness": 0.75,
-                    "value": polarity,
-                },
-            },
+            mode="gauge+number+delta", value=round(polarity, 3),
+            title=dict(text=title, font=dict(color=TEXT, size=14)),
+            number=dict(font=dict(color=bar_color, size=24)),
+            delta=dict(reference=0, increasing=dict(color=GREEN), decreasing=dict(color=PINK)),
+            gauge=dict(
+                axis=dict(range=[-1,1], tickwidth=1, tickfont=dict(color=DIM)),
+                bar=dict(color=bar_color),
+                bgcolor=CARD, bordercolor=BORDER,
+                threshold=dict(line=dict(color=TEXT, width=2), thickness=0.75, value=polarity),
+            ),
         ))
-        fig.update_layout(
-            paper_bgcolor="white",
-            height=300,
-        )
+        fig.update_layout(**DARK_LAYOUT, height=280)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_sentiment_gauge failed: {e}")
+        logger.error(f"[Visualizer] plot_sentiment_gauge: {e}")
         return go.Figure()
 
 
 def plot_correlation_heatmap(df: pd.DataFrame, title: str = "Correlation Matrix") -> go.Figure:
-    """
-    Heatmap of correlations between numeric columns.
-
-    Args:
-        df: Input DataFrame.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
     try:
         numeric_df = df.select_dtypes(include=[np.number])
-        if numeric_df.shape[1] < 2:
-            return go.Figure()
-
+        if numeric_df.shape[1] < 2: return go.Figure()
         corr = numeric_df.corr()
-
-        fig = px.imshow(
-            corr,
-            title=title,
-            color_continuous_scale="RdBu_r",
-            zmin=-1,
-            zmax=1,
-            text_auto=".2f",
-            aspect="auto",
-        )
-        fig.update_layout(
-            paper_bgcolor="white",
-        )
+        fig = px.imshow(corr, title=title,
+            color_continuous_scale=[[0,PINK],[0.5,CARD],[1,TEAL]],
+            zmin=-1, zmax=1, text_auto=".2f", aspect="auto")
+        fig.update_traces(textfont=dict(color=TEXT, size=9))
+        fig.update_layout(**DARK_LAYOUT)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_correlation_heatmap failed: {e}")
+        logger.error(f"[Visualizer] plot_correlation_heatmap: {e}")
         return go.Figure()
 
 
 def plot_missing_values(profile: dict, title: str = "Missing Values by Column") -> go.Figure:
-    """
-    Bar chart showing missing value percentage per column.
-
-    Args:
-        profile: EDA profile dict from eda.profile_dataframe().
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
     try:
         missing = profile.get("missing", {})
-        if not missing:
-            return go.Figure()
-
-        cols = list(missing.keys())
-        percents = [missing[c]["percent"] for c in cols]
-
-        # Only show columns with missing values
-        data = [(c, p) for c, p in zip(cols, percents) if p > 0]
+        if not missing: return go.Figure()
+        data = [(c, m["percent"]) for c, m in missing.items() if m["percent"] > 0]
         if not data:
             fig = go.Figure()
-            fig.update_layout(
-                title="✅ No Missing Values Found",
-                paper_bgcolor="white",
-            )
+            fig.update_layout(**DARK_LAYOUT, title="✅ No Missing Values Found")
             return fig
-
         data.sort(key=lambda x: x[1], reverse=True)
-        cols_filtered, percents_filtered = zip(*data)
-
-        fig = px.bar(
-            x=list(cols_filtered),
-            y=list(percents_filtered),
-            title=title,
-            labels={"x": "Column", "y": "Missing %"},
-            color=list(percents_filtered),
-            color_continuous_scale=["#2ecc71", "#e74c3c"],
-            text=[f"{p:.1f}%" for p in percents_filtered],
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            showlegend=False,
-        )
+        cols, pcts = zip(*data)
+        fig = px.bar(x=list(cols), y=list(pcts), title=title,
+            labels={"x":"Column","y":"Missing %"},
+            color=list(pcts), color_continuous_scale=[[0,GREEN],[1,PINK]],
+            text=[f"{p:.1f}%" for p in pcts])
+        fig.update_traces(textposition="outside", textfont=dict(color=DIM))
+        fig.update_layout(**DARK_LAYOUT, showlegend=False)
+        fig.update_coloraxes(showscale=False)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_missing_values failed: {e}")
+        logger.error(f"[Visualizer] plot_missing_values: {e}")
         return go.Figure()
 
 
 def plot_topic_distribution(topics: list, title: str = "Detected Topics") -> go.Figure:
-    """
-    Horizontal bar chart for detected topics and their confidence scores.
-
-    Args:
-        topics: List of dicts with 'topic' and 'confidence' keys.
-        title: Chart title.
-
-    Returns:
-        Plotly Figure object.
-    """
     try:
-        if not topics:
-            return go.Figure()
-
-        df = pd.DataFrame(topics)
-        df = df.sort_values("confidence", ascending=True)
-
-        fig = px.bar(
-            df,
-            x="confidence",
-            y="topic",
-            orientation="h",
-            title=title,
-            color="confidence",
-            color_continuous_scale=["#667eea", "#764ba2"],
-            text=df["confidence"].apply(lambda x: f"{x:.1%}"),
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            showlegend=False,
-            xaxis=dict(tickformat=".0%"),
-        )
+        if not topics: return go.Figure()
+        df = pd.DataFrame(topics).sort_values("confidence", ascending=True)
+        fig = px.bar(df, x="confidence", y="topic", orientation="h", title=title,
+            color="confidence", color_continuous_scale=[[0,TEAL],[1,PURPLE]],
+            text=df["confidence"].apply(lambda x: f"{x:.1%}"))
+        fig.update_traces(textposition="outside", textfont=dict(color=DIM))
+        # FIX: same duplicate-key issue — 'xaxis' was passed both inside
+        # **DARK_LAYOUT and again explicitly. Use update_xaxes() to merge.
+        fig.update_layout(**DARK_LAYOUT, showlegend=False)
+        fig.update_xaxes(tickformat=".0%")
+        fig.update_coloraxes(showscale=False)
         return fig
     except Exception as e:
-        logger.error(f"[Visualizer] plot_topic_distribution failed: {e}")
+        logger.error(f"[Visualizer] plot_topic_distribution: {e}")
         return go.Figure()
 
 
 def auto_visualize(df: pd.DataFrame) -> list:
-    """
-    Automatically generate the most relevant charts for any DataFrame.
-    Developer-built: smart chart selection based on column types and cardinality.
-
-    Args:
-        df: Input DataFrame.
-
-    Returns:
-        List of dicts with 'title' and 'figure' keys.
-    """
+    """Auto-select the most relevant charts — all dark-themed."""
     charts = []
-    if df.empty:
-        return charts
+    if df.empty: return charts
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    cat_cols = [
-        col for col in df.select_dtypes(include=["object"]).columns
-        if df[col].nunique() <= 20  # Only low-cardinality categoricals
-    ]
+    cat_cols = [c for c in df.select_dtypes(include=["object"]).columns if df[c].nunique() <= 20]
 
-    # Chart 1: Distribution for each numeric column
     for col in numeric_cols[:3]:
-        charts.append({
-            "title": f"Distribution — {col}",
-            "figure": plot_histogram(df, col),
-            "type": "histogram",
-        })
+        charts.append({"title": f"Distribution — {col}",
+            "figure": plot_histogram(df, col), "type": "histogram"})
 
-    # Chart 2: Value counts for categorical columns
     for col in cat_cols[:2]:
-        charts.append({
-            "title": f"Top Values — {col}",
-            "figure": plot_value_counts(df, col),
-            "type": "bar",
-        })
+        charts.append({"title": f"Top Values — {col}",
+            "figure": plot_value_counts(df, col), "type": "bar"})
 
-    # Chart 3: Scatter for first two numeric columns
     if len(numeric_cols) >= 2:
-        charts.append({
-            "title": f"Relationship — {numeric_cols[0]} vs {numeric_cols[1]}",
-            "figure": plot_scatter(df, numeric_cols[0], numeric_cols[1]),
-            "type": "scatter",
-        })
+        # FIX: drop NaN before scatter to avoid the marker-size crash
+        valid_df = df[[numeric_cols[0], numeric_cols[1]]].dropna()
+        if not valid_df.empty:
+            charts.append({"title": f"Relationship — {numeric_cols[0]} vs {numeric_cols[1]}",
+                "figure": plot_scatter(df, numeric_cols[0], numeric_cols[1]), "type": "scatter"})
 
-    # Chart 4: Correlation heatmap if 3+ numeric columns
     if len(numeric_cols) >= 3:
-        charts.append({
-            "title": "Correlation Matrix",
-            "figure": plot_correlation_heatmap(df),
-            "type": "heatmap",
-        })
+        charts.append({"title": "Correlation Matrix",
+            "figure": plot_correlation_heatmap(df), "type": "heatmap"})
 
-    # Chart 5: Pie for first categorical
     if cat_cols:
-        charts.append({
-            "title": f"Composition — {cat_cols[0]}",
-            "figure": plot_pie(df, cat_cols[0]),
-            "type": "pie",
-        })
+        charts.append({"title": f"Composition — {cat_cols[0]}",
+            "figure": plot_pie(df, cat_cols[0]), "type": "pie"})
 
     return charts

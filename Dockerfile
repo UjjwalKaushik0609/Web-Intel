@@ -1,23 +1,20 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Dockerfile — Web Scraping AI Bot
-# Multi-stage build for smaller final image.
-# Stage 1 (builder): Install Python dependencies
-# Stage 2 (runtime): Copy only what's needed + install Playwright Chromium
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# Dockerfile — Web Intel
+# Developer: Ujjwal Kaushik
+# Updated: Gemini 2.5 Flash + Power BI Dashboard + Live Monitor
+# Multi-stage build for smaller image size
+# =============================================================================
 
 # ── STAGE 1: Builder ─────────────────────────────────────────────────────────
 FROM python:3.11-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir --prefix=/install -r requirements.txt
@@ -26,14 +23,12 @@ RUN pip install --no-cache-dir --upgrade pip \
 # ── STAGE 2: Runtime ─────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
 
-# Labels for image metadata
-LABEL maintainer="Web Scraping AI Bot"
-LABEL description="AI-powered web scraper using Gemini 1.5 Flash"
-LABEL version="1.0.0"
+# Updated labels
+LABEL maintainer="Ujjwal Kaushik"
+LABEL description="Web Intel — Gemini 2.5 Flash + Power BI Dashboard + Live Monitor"
+LABEL version="2.0.0"
 
-# Install runtime system dependencies required by Playwright/Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Chromium dependencies
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -58,45 +53,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder stage
 COPY --from=builder /install /usr/local
 
-# Set working directory
 WORKDIR /app
 
-# Copy application code
 COPY . .
 
-# Install Playwright and download Chromium browser
 RUN playwright install chromium \
     && playwright install-deps chromium
 
-# ── Security: Run as non-root user ────────────────────────────────────────────
+# ── Security: Non-root user ───────────────────────────────────────────────────
 RUN groupadd --gid 1001 appuser \
     && useradd --uid 1001 --gid appuser --shell /bin/bash --create-home appuser \
-    && chown -R appuser:appuser /app \
-    && chown -R appuser:appuser /root/.cache/ms-playwright 2>/dev/null || true
+    && chown -R appuser:appuser /app
 
-# Switch to non-root user
+# Copy playwright browsers to appuser home so non-root can access
+RUN mkdir -p /home/appuser/.cache \
+    && cp -r /root/.cache/ms-playwright /home/appuser/.cache/ 2>/dev/null || true \
+    && chown -R appuser:appuser /home/appuser/.cache 2>/dev/null || true
+
 USER appuser
 
-# Create necessary directories
 RUN mkdir -p .cache exports
 
-# Environment variables with defaults
+# ── Environment Variables ─────────────────────────────────────────────────────
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV STREAMLIT_SERVER_PORT=8501
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV STREAMLIT_SERVER_HEADLESS=true
 ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+# Tell Playwright where browsers are for non-root user
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
 
-# Expose Streamlit port
 EXPOSE 8501
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD wget --quiet --tries=1 --spider http://localhost:8501/_stcore/health || exit 1
+    CMD wget --quiet --tries=1 --spider \
+    http://localhost:8501/_stcore/health || exit 1
 
-# Start the Streamlit application
-CMD ["streamlit", "run", "app/main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "app/main.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]

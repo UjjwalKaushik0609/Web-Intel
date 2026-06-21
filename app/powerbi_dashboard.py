@@ -180,7 +180,38 @@ def _scatter(df):
     x = _best_num(df, prefer=["revenue","price","sales"])
     rem = [c for c in nums if c != x]; y = rem[0] if rem else nums[1]
     label = _best_label(df); cat = _best_cat(df)
-    fig = px.scatter(df, x=x, y=y, size=x, size_max=40,
+
+    # FIX: de-duplicate selected column names (and de-duplicate the
+    # DataFrame's own columns too — Wikipedia tables sometimes produce
+    # two columns that both end up named e.g. "rating" after cleaning).
+    # Passing the same column name twice into px.scatter's column
+    # selection raises "Expected unique column names".
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+
+    # Build the column list while skipping anything that collides with
+    # a name already chosen (label/cat must differ from x and y, and
+    # from each other).
+    cols_needed = [x, y]
+    if cat and cat not in cols_needed:
+        cols_needed.append(cat)
+    if label and label not in cols_needed:
+        cols_needed.append(label)
+    else:
+        label = None  # avoid re-using x/y/cat as the text label
+
+    plot_df = df[cols_needed].dropna(subset=[x, y]).copy()
+    if plot_df.empty:
+        return None
+
+    # FIX: size must be non-negative — use absolute value, fill any
+    # remaining NaN in the size column with the column's median
+    size_vals = plot_df[x].abs()
+    if size_vals.isna().any():
+        size_vals = size_vals.fillna(size_vals.median() if not size_vals.dropna().empty else 1)
+    plot_df["_bubble_size"] = size_vals
+
+    fig = px.scatter(plot_df, x=x, y=y, size="_bubble_size", size_max=40,
         color=cat if cat else None, text=label if label else None,
         color_discrete_sequence=PAL)
     fig.update_traces(textposition="top center", textfont=dict(color=DIM, size=8),
@@ -398,6 +429,15 @@ def _table(df, n=10):
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
 def render_dashboard(df: pd.DataFrame, source_url: str = ""):
     """Full Power BI dashboard — auto-detects all chart types."""
+    # FIX: de-duplicate column names ONCE here, before any chart function
+    # runs. Some scraped/extracted tables end up with two columns sharing
+    # the same name (e.g. two "rating" fields) which crashes Plotly
+    # Express with "Expected unique column names, got: 'rating' 2 times".
+    if df.columns.duplicated().any():
+        logger.warning(f"[Dashboard] Dropping duplicate columns: "
+                        f"{df.columns[df.columns.duplicated()].tolist()}")
+        df = df.loc[:, ~df.columns.duplicated()]
+
     df   = _convert_nums(df)
     nums = _nums(df)
     cats = _cats(df)

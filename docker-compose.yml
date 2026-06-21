@@ -1,28 +1,33 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# docker-compose.yml — Web Scraping AI Bot
-# Single-service deployment for local development and testing.
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# docker-compose.yml — Web Intel
+# SECURITY: No API key is baked into the image or this file.
+# Each user enters their OWN key in the app's sidebar at runtime.
+# =============================================================================
 
 version: "3.9"
 
 services:
-  scraper-bot:
+  web-intel:
     build:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    container_name: web-scraping-ai-bot
+    container_name: web-intel
     restart: unless-stopped
 
-    # Port mapping: host:container
     ports:
       - "8501:8501"
 
-    # Mount .env file for API key and config
-    env_file:
-      - .env
+    # NOTE: We deliberately do NOT load .env here for the public image.
+    # The app asks each visitor for their own Gemini API key in the
+    # sidebar (stored in their browser session only — see app/main.py).
+    #
+    # If you want a PRIVATE single-user deployment that auto-loads YOUR
+    # key, uncomment the line below (only do this for local/private use,
+    # never for a publicly shared container):
+    # env_file:
+    #   - .env
 
-    # Additional environment overrides
     environment:
       - STREAMLIT_SERVER_PORT=8501
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
@@ -30,12 +35,10 @@ services:
       - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
       - PYTHONUNBUFFERED=1
 
-    # Persist cache and exports across container restarts
     volumes:
-      - scraper_cache:/app/.cache
-      - scraper_exports:/app/exports
+      - webintel_cache:/app/.cache
+      - webintel_exports:/app/exports
 
-    # Resource limits — adjust based on your machine
     deploy:
       resources:
         limits:
@@ -45,7 +48,6 @@ services:
           memory: 512M
           cpus: "0.5"
 
-    # Health check using Streamlit's built-in health endpoint
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8501/_stcore/health"]
       interval: 30s
@@ -53,16 +55,14 @@ services:
       retries: 3
       start_period: 30s
 
-    # Logging config — limit log size to avoid disk filling up
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-# Named volumes for persistence
 volumes:
-  scraper_cache:
+  webintel_cache:
     driver: local
-  scraper_exports:
+  webintel_exports:
     driver: local

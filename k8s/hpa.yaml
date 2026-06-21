@@ -1,33 +1,30 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# k8s/hpa.yaml — Horizontal Pod Autoscaler for Web Scraping AI Bot
+# =============================================================================
+# k8s/hpa.yaml — Horizontal Pod Autoscaler for Web Intel
 # Automatically scales pods between 2 and 5 based on CPU and memory usage.
 # Requires the Kubernetes Metrics Server to be installed on the cluster.
 #
 # Install Metrics Server on EKS:
 #   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: scraper-bot-hpa
+  name: web-intel-hpa
   namespace: default
   labels:
-    app: scraper-bot
+    app: web-intel
 
 spec:
-  # Target deployment to autoscale
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: scraper-bot-deployment
+    name: web-intel-deployment
 
-  # Pod count bounds
-  minReplicas: 2  # Always keep at least 2 pods running (high availability)
-  maxReplicas: 5  # Don't scale above 5 pods (cost control)
+  minReplicas: 2
+  maxReplicas: 5
 
   metrics:
-    # Scale up when average CPU across all pods exceeds 70%
     - type: Resource
       resource:
         name: cpu
@@ -35,7 +32,6 @@ spec:
           type: Utilization
           averageUtilization: 70
 
-    # Scale up when average memory across all pods exceeds 80%
     - type: Resource
       resource:
         name: memory
@@ -43,25 +39,22 @@ spec:
           type: Utilization
           averageUtilization: 80
 
-  # Scaling behavior — prevents too-frequent scaling (flapping)
   behavior:
     scaleUp:
-      # Scale up fast when under load
-      stabilizationWindowSeconds: 60   # Wait 1 min before scaling up again
+      stabilizationWindowSeconds: 60
       policies:
         - type: Pods
-          value: 2        # Add at most 2 pods at a time
+          value: 2
           periodSeconds: 60
         - type: Percent
-          value: 50       # Or scale up by 50%, whichever is larger
+          value: 50
           periodSeconds: 60
       selectPolicy: Max
 
     scaleDown:
-      # Scale down slowly to avoid removing pods too aggressively
-      stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+      stabilizationWindowSeconds: 300
       policies:
         - type: Pods
-          value: 1        # Remove at most 1 pod at a time
+          value: 1
           periodSeconds: 120
       selectPolicy: Min

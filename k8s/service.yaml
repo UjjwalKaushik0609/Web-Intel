@@ -1,18 +1,16 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# k8s/service.yaml — Kubernetes Service for Web Scraping AI Bot
-# LoadBalancer type creates an AWS Elastic Load Balancer (ELB) automatically.
-# This exposes the Streamlit app publicly on port 80.
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
+# k8s/service.yaml — Kubernetes Service for Web Intel
+# LoadBalancer type creates an AWS Elastic Load Balancer automatically.
+# =============================================================================
 
 apiVersion: v1
 kind: Service
 metadata:
-  name: scraper-bot-service
+  name: web-intel-service
   namespace: default
   labels:
-    app: scraper-bot
+    app: web-intel
   annotations:
-    # AWS EKS annotations for ALB/NLB configuration
     service.beta.kubernetes.io/aws-load-balancer-type: "external"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
@@ -21,25 +19,24 @@ metadata:
     # service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
 
 spec:
-  type: LoadBalancer  # Creates AWS ELB — exposes app to the internet
+  type: LoadBalancer
 
   selector:
-    app: scraper-bot  # Routes traffic to pods with this label
+    app: web-intel
 
   ports:
     - name: http
       protocol: TCP
-      port: 80           # External port (browser hits this)
-      targetPort: 8501   # Internal Streamlit port
+      port: 80
+      targetPort: 8501
 
-    # Uncomment for HTTPS support (requires SSL cert annotation above)
+    # Uncomment for HTTPS
     # - name: https
     #   protocol: TCP
     #   port: 443
     #   targetPort: 8501
 
-  # Session affinity helps with Streamlit's WebSocket connections
   sessionAffinity: ClientIP
   sessionAffinityConfig:
     clientIP:
-      timeoutSeconds: 3600  # 1 hour session stickiness
+      timeoutSeconds: 3600
