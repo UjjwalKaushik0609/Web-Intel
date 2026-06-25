@@ -521,33 +521,147 @@ with tab3:
                 st.error(f"❌ {e}")
 
 # ════════════════════════════════════════════════════════════════════
-# TAB 4 — LIVE MONITOR
+# TAB 4 — LIVE MONITOR (TRUE auto-refresh via st.fragment)
 # ════════════════════════════════════════════════════════════════════
+#
+# FIX: Previously this tab used time.sleep(1) + st.rerun(), which
+# re-executed the ENTIRE main.py (all 5 tabs, all CSS, sidebar) every
+# second — that was the root cause of the app-wide lag.
+#
+# Now the live-updating part is isolated inside a @st.fragment with
+# run_every="60s". Streamlit reruns ONLY this fragment's code on its
+# own 60-second timer — the sidebar, other tabs, and CSS never
+# re-render. This is the officially recommended pattern for periodic
+# auto-refresh in Streamlit (added in Streamlit 1.37+).
+
+@st.fragment(run_every="60s")
+def _live_monitor_fragment():
+    """Auto-refreshing fragment — reruns itself every 60s, nothing else."""
+    mon_url  = st.session_state.get("mon_url", "")
+    ct_mon   = st.session_state.get("ct_mon", "Auto-detect")
+    a_field  = st.session_state.get("a_field", "")
+    a_cond   = st.session_state.get("a_cond", "above")
+    a_thresh = st.session_state.get("a_thresh", 5.0)
+    a_label  = st.session_state.get("a_label", "")
+    alert_rules = [{"field": a_field, "condition": a_cond, "threshold": a_thresh,
+                    "label": a_label or f"{a_field} {a_cond} {a_thresh}"}] if a_field else []
+
+    if not (st.session_state.monitor_running and st.session_state.monitor_session):
+        st.markdown("""<div style='background:rgba(255,255,255,.02);
+        border:2px dashed rgba(139,92,246,.2);border-radius:16px;
+        padding:3rem;text-align:center;margin-top:1rem;'>
+        <div style='font-size:3rem;'>📡</div>
+        <div style='color:#a78bfa;font-size:1.2rem;font-weight:600;margin:.5rem 0;'>
+        Live Monitor Ready</div>
+        <div style='color:#4a4a6a;'>Enter a URL and click <b>Start Monitoring</b></div>
+        </div>""", unsafe_allow_html=True)
+        return
+
+    session = st.session_state.monitor_session
+    st.markdown(f"""<div class="live-banner">
+      <span style='color:#34d399;font-weight:600;'>📡 LIVE — {mon_url[:50]}</span>
+      <span style='color:#7c7ca0;font-size:.85rem;'>
+        Snapshot #{len(session.snapshots)+1} · Auto-refreshing every 60s
+      </span>
+    </div>""", unsafe_allow_html=True)
+
+    with st.spinner("🔄 Fetching fresh data..."):
+        try:
+            pipeline = _get_pipeline()
+            records = _extract(mon_url, pipeline,
+                ct=None if ct_mon == "Auto-detect" else ct_mon)
+
+            if not records:
+                st.warning("⚠️ No records. Try a different Content Type.")
+            else:
+                changes = session.add_snapshot(records, alert_rules or [])
+                prev = session.get_previous()
+                curr = session.get_latest()
+
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("📸 Snapshots", len(session.snapshots))
+                m2.metric("📋 Records Now", len(records))
+                m3.metric("📋 Records Before", len(prev["records"]) if prev else "—")
+                m4.metric("🔄 Changes", changes["total_changes"],
+                    delta=changes["total_changes"] if changes["has_changes"] else None)
+                m5.metric("🚨 Alerts", len(session.alert_history))
+
+                if changes["has_changes"] and changes["changed"]:
+                    _section("🔄 Field Changes")
+                    rows = []
+                    for cr2 in changes["changed"]:
+                        for fc in cr2["field_changes"]:
+                            d = fc.get("direction", "changed")
+                            rows.append({
+                                "Record": cr2["key"], "Field": fc["field"],
+                                "Previous": fc["previous"], "Current": fc["current"],
+                                "Change %": f"{fc['pct_change']:+.2f}%" if fc.get("pct_change") is not None else "—",
+                                "Dir": "🟢↑" if d == "up" else "🔴↓" if d == "down" else "🔵~",
+                            })
+                    if rows:
+                        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                elif len(session.snapshots) > 1:
+                    st.success("✅ No changes since last snapshot")
+
+                _section("📋 Previous vs Current")
+                pt, ct2 = st.columns(2)
+                with pt:
+                    st.caption(f"⏮ Previous ({'—' if not prev else prev['timestamp'][11:19]})")
+                    if prev and prev["records"]:
+                        st.dataframe(pd.DataFrame(prev["records"]).head(8), use_container_width=True)
+                    else:
+                        st.info("No previous snapshot yet.")
+                with ct2:
+                    st.caption(f"▶ Current ({curr['timestamp'][11:19]})")
+                    st.dataframe(pd.DataFrame(records).head(8), use_container_width=True)
+
+                if session.alert_history:
+                    _section("🚨 Alerts")
+                    for al in reversed(session.alert_history[-8:]):
+                        d = al.get("direction", "changed")
+                        icon = "🟢" if d == "up" else "🔴"
+                        pct = f"{al.get('pct_change',0):+.2f}%" if al.get("pct_change") else ""
+                        st.markdown(f"""<div class="alert-box">
+                        {icon} <b>{al['alert']}</b> — {al['record_key']} ·
+                        {al['field']}: {al['previous']} → <b>{al['current']}</b>
+                        {pct} · {al['triggered_at'][11:19]}</div>""", unsafe_allow_html=True)
+
+                _save_dashboard(pd.DataFrame(records))
+                st.caption("💡 Data saved → **📈 Dashboard** tab")
+
+        except Exception as e:
+            st.error(f"❌ {e}")
+            logger.exception(e)
+
+    st.caption(f"⏱️ Next auto-refresh in ~60s · Last updated "
+              f"{curr['timestamp'][11:19] if st.session_state.monitor_session.snapshots else ''}")
+
+
 with tab4:
     _section("📡 Live Data Monitor")
     st.markdown("""<div class="live-banner">
       <span style='color:#34d399;font-weight:600;'>⚡ Live Monitoring</span>
       <span style='color:#7c7ca0;font-size:.85rem;'>
-        Scrapes every 60s · Previous vs Current · 🟢↑ / 🔴↓ · Alerts</span>
+        Auto-refreshes every 60s · Previous vs Current · 🟢↑ / 🔴↓ · Alerts</span>
     </div>""", unsafe_allow_html=True)
 
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    c1, c2 = st.columns([2,1])
-    with c1: mon_url = st.text_input("URL to Monitor",
-        placeholder="https://quotes.toscrape.com", key="mon_url",
-        value=st.session_state.monitor_url)
-    with c2: ct_mon = st.selectbox("Content Type",
-        ["Auto-detect","product","article","job","event"], key="ct_mon")
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        mon_url = st.text_input("URL to Monitor",
+            placeholder="https://quotes.toscrape.com", key="mon_url",
+            value=st.session_state.monitor_url)
+    with c2:
+        ct_mon = st.selectbox("Content Type",
+            ["Auto-detect", "product", "article", "job", "event"], key="ct_mon")
     st.markdown('</div>', unsafe_allow_html=True)
 
     with st.expander("🔔 Alert Rules (optional)"):
         ac1, ac2, ac3, ac4 = st.columns(4)
-        with ac1: a_field  = st.text_input("Field", placeholder="price", key="a_field")
-        with ac2: a_cond   = st.selectbox("Condition", ["above","below","change_pct"], key="a_cond")
-        with ac3: a_thresh = st.number_input("Threshold", value=5.0, key="a_thresh")
-        with ac4: a_label  = st.text_input("Label", placeholder="Price spike!", key="a_label")
-        alert_rules = [{"field":a_field,"condition":a_cond,"threshold":a_thresh,
-                        "label":a_label or f"{a_field} {a_cond} {a_thresh}"}] if a_field else []
+        with ac1: st.text_input("Field", placeholder="price", key="a_field")
+        with ac2: st.selectbox("Condition", ["above", "below", "change_pct"], key="a_cond")
+        with ac3: st.number_input("Threshold", value=5.0, key="a_thresh")
+        with ac4: st.text_input("Label", placeholder="Price spike!", key="a_label")
 
     cs, cst, cr = st.columns(3)
     with cs: start = st.button("▶️ Start Monitoring", key="btn_start")
@@ -561,97 +675,20 @@ with tab4:
         if (st.session_state.monitor_session is None or
                 st.session_state.monitor_session.url != mon_url):
             st.session_state.monitor_session = MonitorSession(url=mon_url)
-        st.success(f"✅ Monitoring started: {mon_url}")
-    if stop:  st.session_state.monitor_running = False; st.info("⏹️ Paused.")
-    if reset: st.session_state.monitor_session = None; st.session_state.monitor_running = False; st.success("🔄 Reset.")
+        st.success(f"✅ Monitoring started — auto-refreshing every 60s: {mon_url}")
+    if stop:
+        st.session_state.monitor_running = False
+        st.info("⏹️ Paused.")
+    if reset:
+        st.session_state.monitor_session = None
+        st.session_state.monitor_running = False
+        st.success("🔄 Reset.")
 
     st.divider()
 
-    if st.session_state.monitor_running and st.session_state.monitor_session:
-        session = st.session_state.monitor_session
-        st.markdown(f"""<div class="live-banner">
-          <span style='color:#34d399;font-weight:600;'>📡 LIVE — {mon_url[:50]}</span>
-          <span style='color:#7c7ca0;font-size:.85rem;'>Snapshot #{len(session.snapshots)+1} · Every 60s</span>
-        </div>""", unsafe_allow_html=True)
-
-        with st.spinner("🔄 Fetching fresh data..."):
-            try:
-                pipeline = _get_pipeline()
-                records = _extract(mon_url, pipeline,
-                    ct=None if ct_mon=="Auto-detect" else ct_mon)
-
-                if not records:
-                    st.warning("⚠️ No records. Try different Content Type.")
-                else:
-                    changes = session.add_snapshot(records, alert_rules or [])
-                    prev = session.get_previous()
-                    curr = session.get_latest()
-
-                    m1,m2,m3,m4,m5 = st.columns(5)
-                    m1.metric("📸 Snapshots", len(session.snapshots))
-                    m2.metric("📋 Records Now", len(records))
-                    m3.metric("📋 Records Before", len(prev["records"]) if prev else "—")
-                    m4.metric("🔄 Changes", changes["total_changes"],
-                        delta=changes["total_changes"] if changes["has_changes"] else None)
-                    m5.metric("🚨 Alerts", len(session.alert_history))
-
-                    if changes["has_changes"] and changes["changed"]:
-                        _section("🔄 Field Changes")
-                        rows = []
-                        for cr2 in changes["changed"]:
-                            for fc in cr2["field_changes"]:
-                                d = fc.get("direction","changed")
-                                rows.append({
-                                    "Record": cr2["key"], "Field": fc["field"],
-                                    "Previous": fc["previous"], "Current": fc["current"],
-                                    "Change %": f"{fc['pct_change']:+.2f}%" if fc.get("pct_change") is not None else "—",
-                                    "Dir": "🟢↑" if d=="up" else "🔴↓" if d=="down" else "🔵~",
-                                })
-                        if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True)
-                    elif len(session.snapshots) > 1:
-                        st.success("✅ No changes since last snapshot")
-
-                    _section("📋 Previous vs Current")
-                    pt, ct2 = st.columns(2)
-                    with pt:
-                        st.caption(f"⏮ Previous ({'—' if not prev else prev['timestamp'][11:19]})")
-                        if prev and prev["records"]:
-                            st.dataframe(pd.DataFrame(prev["records"]).head(8), use_container_width=True)
-                        else: st.info("No previous snapshot yet.")
-                    with ct2:
-                        st.caption(f"▶ Current ({curr['timestamp'][11:19]})")
-                        st.dataframe(pd.DataFrame(records).head(8), use_container_width=True)
-
-                    if session.alert_history:
-                        _section("🚨 Alerts")
-                        for al in reversed(session.alert_history[-8:]):
-                            d = al.get("direction","changed")
-                            icon = "🟢" if d=="up" else "🔴"
-                            pct = f"{al.get('pct_change',0):+.2f}%" if al.get("pct_change") else ""
-                            st.markdown(f"""<div class="alert-box">
-                            {icon} <b>{al['alert']}</b> — {al['record_key']} ·
-                            {al['field']}: {al['previous']} → <b>{al['current']}</b>
-                            {pct} · {al['triggered_at'][11:19]}</div>""", unsafe_allow_html=True)
-
-                    _save_dashboard(pd.DataFrame(records))
-                    st.info("💡 Data saved → **📈 Dashboard** tab")
-
-            except Exception as e:
-                st.error(f"❌ {e}"); logger.exception(e)
-
-        st.caption("⏱️ Click **Start Monitoring** again any time to pull a fresh snapshot. "
-                  "(Auto-refresh removed to keep the app responsive — this matches "
-                  "real Power BI behavior of manual/scheduled refresh.)")
-
-    else:
-        st.markdown("""<div style='background:rgba(255,255,255,.02);
-        border:2px dashed rgba(139,92,246,.2);border-radius:16px;
-        padding:3rem;text-align:center;margin-top:1rem;'>
-        <div style='font-size:3rem;'>📡</div>
-        <div style='color:#a78bfa;font-size:1.2rem;font-weight:600;margin:.5rem 0;'>
-        Live Monitor Ready</div>
-        <div style='color:#4a4a6a;'>Enter a URL and click <b>Start Monitoring</b></div>
-        </div>""", unsafe_allow_html=True)
+    # This is the ONLY part of the tab that auto-reruns every 60 seconds —
+    # everything above (URL input, buttons, sidebar, other tabs) stays static.
+    _live_monitor_fragment()
 
 # ════════════════════════════════════════════════════════════════════
 # TAB 5 — POWER BI DASHBOARD
